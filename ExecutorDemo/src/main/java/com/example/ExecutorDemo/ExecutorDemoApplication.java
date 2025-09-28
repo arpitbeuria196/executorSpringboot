@@ -4,12 +4,14 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.scheduling.annotation.EnableAsync;
 
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @SpringBootApplication
 @Slf4j
+@EnableAsync
 public class ExecutorDemoApplication implements CommandLineRunner {
 
 	public static void main(String[] args) {
@@ -21,12 +23,35 @@ public class ExecutorDemoApplication implements CommandLineRunner {
 	@Override
 	public void run(String... args) throws Exception {
 
+		RejectedExecutionHandler retryAfter1s = (task,exec)->{
+			for(int attempt =1 ;attempt<=5; attempt++)
+			{
+				try{
+					log.warn("Rejected (try {}): pool ={}, active={}, queued={}",attempt,exec.getPoolSize(),exec.getActiveCount(),exec.getQueue().size());
+
+					if(exec.isShutdown()) break;
+
+					Thread.sleep(1_000);
+					exec.execute(task);
+					return;
+
+
+				} catch (Exception e) {
+					Thread.currentThread().interrupt();
+					log.warn("Retry interrupted. Dropping task.");
+					return;
+				}
+			}
+		};
+
 		ThreadPoolExecutor executor = new ThreadPoolExecutor(
 				4,
 				6,
 				30,
 				TimeUnit.SECONDS,
-				new ArrayBlockingQueue<>(10));
+
+				new ArrayBlockingQueue<>(10),
+				retryAfter1s);
 
 		log.info("Before Starting for Loop",Thread.currentThread().getName());
 		int rejected=0;
